@@ -1,0 +1,331 @@
+---
+title: "Reddit Data Viz Challenge - August"
+author: "tidyversatile"
+date: "8/18/2018"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+# TSA Claims Data, 2007-2017
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE
+)
+library(tidyverse)
+library(scales)
+library(gridExtra)
+library(grid)
+library(viridis)
+library(ggmap)
+
+## Load the data and clean it up
+options(scipen = 999)
+
+tsa_2007_to_2009 <- read_csv("claims-2007-2009_0.csv")
+
+colnames(tsa_2007_to_2009)[9] <- "Item Category"
+
+##Standardize date formats
+tsa_2007_to_2009$`Date Received` <- as.Date(tsa_2007_to_2009$`Date Received`, format = "%d-%b-%y")
+
+##truncate each date
+## tsa_2007_to_2009$`Incident Date` <- str_sub(tsa_2007_to_2009$`Incident Date`, 1, str_length(tsa_2007_to_2009$`Incident Date`)-5)
+
+tsa_2007_to_2009$`Incident Date` <- as.Date(tsa_2007_to_2009$`Incident Date`, format = "%m/%e/%y")
+tsa_2007_to_2009[10:11] <- NULL
+
+tsa_2010_to_2013 <- read_csv("claims-2010-2013_0.csv")
+tsa_2010_to_2013$`Date Received` <- as.Date(tsa_2010_to_2013$`Date Received`, format = "%d-%b-%y")
+tsa_2010_to_2013$`Incident Date` <- as.Date(tsa_2010_to_2013$`Date Received`, format = "%m-%e-%y")  
+
+tsa_2014 <- read_csv("claims-2014(1).csv")
+tsa_2014$`Date Received` <- as.Date(tsa_2014$`Date Received`, format = "%d-%b-%y")
+tsa_2014$`Incident Date` <- as.Date(tsa_2014$`Incident Date`, format = "%d-%b-%y")
+
+tsa_2015 <- read_csv("claims-data-2015.csv")
+colnames(tsa_2015)[3] <- 'Incident Date'
+tsa_2015$`Date Received` <- as.Date(tsa_2015$`Date Received`, format = "%d-%b-%y")
+tsa_2015$`Incident Date` <- as.Date(tsa_2015$`Incident Date`, format = "%d-%b-%y")
+
+
+tsa_2016 <- read_csv("2016_TSA_Converted.csv")
+tsa_2016$`Date Received` <- as.Date(tsa_2016$`Date Received`, format = "%Y-%m-%d")
+tsa_2016$`Incident Date` <- as.Date(tsa_2016$`Incident Date`, format = "%Y-%m-%d")
+
+tsa_2017 <- read_csv("2017_TSA_Converted.csv")
+tsa_2017$`Date Received` <- as.Date(tsa_2017$`Date Received`, format = "%Y-%m-%d")
+tsa_2017$`Incident Date` <- as.Date(tsa_2017$`Incident Date`, format = "%Y-%m-%d")
+
+## Combine into one table
+tsa_2007_to_2017 <- rbind(tsa_2007_to_2009, tsa_2010_to_2013, tsa_2014, tsa_2015, tsa_2016, tsa_2017)
+str(tsa_2007_to_2017)
+##remove old individual files
+rm(tsa_2007_to_2009, tsa_2010_to_2013, tsa_2014, tsa_2015, tsa_2016, tsa_2017)
+
+##explore levels for each variable for each dataset
+
+unique(tsa_2007_to_2017$Disposition)
+unique(tsa_2007_to_2017$`Item Category`)
+
+# replace dollar signs with blank and then convert
+tsa_2007_to_2017$`Close Amount`<- as.numeric(gsub("\\$", "", tsa_2007_to_2017$`Close Amount`))
+
+# add Resolution Time
+
+tsa_2007_to_2017 <- tsa_2007_to_2017 %>%
+  mutate(
+    "Claim Time" = `Date Received` - `Incident Date`
+  )
+
+tsa_2007_to_2017 <- tsa_2007_to_2017[,c(1,2,3,12,4:11)]
+```
+
+
+## Objective
+
+A few key questions guided my analysis:
+
+1. Does waiting longer to file a TSA claim have an impact on its disposition?
+2. Which items are most likely to result in a successful TSA claim?
+3. At which airports do the most incidents occur?
+4. At which airports do incidents take place that are most likely to result in an approved TSA claim?
+
+
+
+### Does waiting longer to file a claim impact its disposition?
+
+I first explored the distribution of reporting times and the proportion of dispositions for each reporting time. To do that, I calculated the difference between the Date Received and Incident Date variables, measured in days. Then, I filtered out cases with a negative Claim Time as they were likely data entry errors. For example, the TSA received a claim on August 2nd, 2007, for an incident reported to take place 4 months later, on December 7th, 2007. If this record were legitimate, then I would be more concerned about flying alongside psychics than with conducting a valid analysis. However, as I have yet to experience any clairvoyants in my air travels, I treated these records as errors, either by the person filling out the claim form, or by the person entering it into the TSA database. 
+
+```{r question 1, echo=FALSE, message=FALSE, warning=FALSE}
+
+##Question 1: Does taking longer to report your incident affect your chances of success?
+
+tsa_2007_to_2017 %>%
+  filter(`Claim Time` >= 0) %>%
+  ggplot(aes(`Claim Time`)) + 
+  geom_histogram(binwidth = 1) +
+  scale_y_continuous(breaks=seq(0,2500,500)) +
+  scale_x_continuous(breaks=seq(0,400,50)) +
+  coord_cartesian(xlim = c(0,400), ylim = c(0,2500)) +
+  labs(x = "Claim Time (days)", y = "Number of Claims") +
+  ggtitle("Distribution of TSA Claims") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The vast majority of claims were filed within 50 days of the incident. However, it was interesting to note that there is a tiny, but noticeable, uptick in the number of claims filed about two years after the date of the  incident. There is a smaller but similar pattern around the one year mark:
+
+```{r}
+tsa_2007_to_2017 %>%
+  filter(`Claim Time` >= 0) %>%
+  ggplot(aes(`Claim Time`)) + 
+  geom_histogram(binwidth = 1) +
+  scale_y_continuous(breaks=seq(0,200,50)) +
+  scale_x_continuous(breaks=seq(0,800,100)) +
+  coord_cartesian(xlim = c(0,800), ylim = c(0,200)) +
+  labs(x = "Claim Time (days)", y = "Number of Claims") +
+  ggtitle("Distribution of TSA Claims") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+This could be the result of approximation by the person filing the claim. If they do not recall the exact date of the incident, perhaps they decide "oh, it was about two years ago".
+
+Next, I calculated and plotted the proportion of cases that were dispositioned as "Approve in Full", "Settle", "Deny", and "In Review". I selected these dispositions because they are consistent across every year, and make up 98% of all Dispositions. I inserted lines at the one-year and two-year mark for reference:
+
+```{r proportions, echo=FALSE}
+
+outcomes_by_claim_time <- tsa_2007_to_2017 %>%
+  filter(`Claim Time` >= 0) %>%
+  group_by(`Claim Time`, Disposition) %>%
+  summarise(
+    `Total Claims` = n()
+  )
+outcomes_by_claim_time <- outcomes_by_claim_time %>%
+  filter(Disposition == "Approve in Full" | Disposition == "Deny" | Disposition == "In Review" | Disposition == "Settle") %>%
+  mutate(
+    Proportion = `Total Claims`/ sum(`Total Claims`, na.rm = TRUE)
+  )
+```
+
+```{r proportion plot, echo=FALSE, message=FALSE, warning=FALSE}
+outcomes_by_claim_time %>%
+  ggplot(aes( `Claim Time`, Proportion))+
+  geom_area(aes(fill= Disposition), position = 'stack') +
+  coord_cartesian(xlim = c(0, 800)) +
+  geom_vline(xintercept = 365, linetype="dashed", 
+             color = "red", size = 1) + 
+  geom_vline(xintercept = 730, linetype="dashed", 
+             color = "red", size = 1) +
+  labs(x = "Claim Time (days)", y = "Percentage") +
+  scale_y_continuous(labels = percent, breaks=seq(0,1,.1)) +
+  ggtitle("Proportion of Dispositions for Each Claim Time") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_viridis(discrete = TRUE, direction = -1)
+```
+
+The data suggest that claims which are filed more than 200 days after the reported incident have an extremely unpredictable chance of being approved in full. However, those patient enough to wait a full year to report an incident are much more likely to see their claim result in a settlement. It is also interesting to note that there are spikes in the denial percentage for claims that are reported around 1 year and 2 years after the incident date. 
+
+Since the vast majority of claims were reported within 50 days, I also wanted to focus on that subset:
+
+```{r days area zoomed, echo=FALSE, message=FALSE, warning=FALSE}
+outcomes_by_claim_time %>%
+  ggplot(aes( `Claim Time`, Proportion))+
+  geom_area(aes(fill= Disposition), position = 'stack') +
+  coord_cartesian(xlim = c(0, 50)) +
+  scale_fill_viridis(discrete = TRUE, direction = -1) +
+  ggtitle("Proportion of Dispositions for Each Claim Time") +
+  scale_y_continuous(labels = percent, breaks=seq(0,1,.1)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(x = "Claim Time (days)", y = "Percentage")
+
+rm(outcomes_by_claim_time)
+```
+
+For the majority of cases, there doesn't seem to be any advantage to filing a claim sooner rather than later, or vice versa. Disposition percentages are stable. 
+
+
+### Which Item Categories result in highest approval percentage?
+
+Next, I explored Item Category data. Specifically, I wanted to know the top ten Item Categories with respect to approval percentage. I followed a similar approach to the first analysis, filtering out the irrelevant dispositions, grouping the data by Item Category and calculating the total number of records for each Item Category/Disposition combination, as well as their proportions. Then, I identified and plotted the ten categories with the highest approval percentages. I was disappointed to find that ageism clearly runs rampant within the TSA - claims for baby-related items have the highest chance of being approved
+
+
+```{r item category, echo=FALSE}
+
+outcomes_by_category <- tsa_2007_to_2017 %>%
+  filter(Disposition == "Settle" | Disposition == "In Review" | Disposition == "Deny" | Disposition == "Approve in Full") %>%
+  group_by(`Item Category`, Disposition) %>%
+  summarise(Total = 
+              n()
+  ) %>%
+  mutate(
+    Percentage = Total / sum(Total, na.rm = TRUE)
+  )
+
+# Remove the entries with multiple categories
+
+outcomes_by_category <- outcomes_by_category[!grepl(";", outcomes_by_category$`Item Category`),]
+approvals_by_category <- outcomes_by_category %>%
+  filter(Disposition == "Approve in Full" & Total >= 25) %>%
+  arrange(desc(Percentage))
+
+top_10_categories <- as.data.frame(approvals_by_category)[1:10,] %>%
+  mutate(id =
+           1:n()
+  )
+
+## Join back into original table
+
+x <- outcomes_by_category %>%
+  semi_join(top_10_categories, by = "Item Category")
+
+for_join <- top_10_categories %>%
+  select(`Item Category`, id)
+
+x <- x %>%
+  left_join(for_join)
+
+percentData <- tsa_2007_to_2017 %>%
+  filter(Disposition == "Settle" | Disposition == "In Review" | Disposition == "Deny" | Disposition == "Approve in Full") %>%
+  semi_join(top_10_categories, by = 'Item Category') %>%
+  group_by(`Item Category`) %>%
+  count(Disposition) %>%
+  mutate(ratio=scales::percent(n/sum(n)))
+
+x %>%
+  ggplot(aes(reorder(`Item Category`, -x$id), y = Total,
+             fill = factor(Disposition, levels = c("Settle", "In Review", "Deny", "Approve in Full")))) +
+  geom_bar(position = "fill",stat = "identity") +
+  scale_fill_viridis(discrete = TRUE, begin = .2) +
+  labs(x = "Item Category") +
+  ggtitle("Item Category Dispositions") +
+  geom_text(data=percentData, aes(y=n,label=ratio), position=position_fill(vjust=0.5), check_overlap = TRUE) +
+  guides(fill=guide_legend(title="Disposition")) +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) +
+  scale_y_continuous() +
+  coord_flip()
+
+rm(outcomes_by_category, approvals_by_category, for_join, top_10_categories, x, percentData)
+```
+
+
+### Which airports report the most claims per passenger? Which airports report the highest approval percentage?
+
+Finally, I wanted to explore disposition percentages by airport. I selected the relevant dispositions and calculated disposition totals and percentages for each airport. Then I joined my data with a dataset containing airport coordinates, plotting the airports on a map of the US. The size of each point represents the number of claims and the color represents the approval percentage. *Note: I searched for a long time for airport traffic data to correctly normalize the number of claims, since airports that have more people flying in and out are likely to have more TSA claims filed, but I could only find data on the top 40 US airports.*
+
+```{r}
+outcomes_by_airport <- tsa_2007_to_2017 %>%
+  filter(Disposition == "Settle" | Disposition == "In Review" | Disposition == "Deny" | Disposition == "Approve in Full") %>%
+  group_by(`Airport Code`, Disposition) %>%
+  summarise(Total = 
+              n()
+  ) %>%
+  mutate(
+    Percentage = Total / sum(Total, na.rm = TRUE)
+  ) %>%
+  drop_na()
+
+approvals_by_airport <- outcomes_by_airport %>%
+  filter(Disposition == "Approve in Full" & Total >= 25) %>%
+  arrange(desc(Percentage))
+
+approvals_by_airport <- as.data.frame(approvals_by_airport) %>%
+  mutate(id =
+           1:n()
+  )
+
+## join airports with coordinates
+
+airports <- read_csv("airport-codes.csv") %>%
+  select("iata_code", "coordinates") %>%
+  drop_na()
+
+airports$`Airport Code` <- airports$iata_code
+airports$iata_code <- NULL
+
+airports <- airports %>%
+  separate(1, into = c("lat", "lon"), sep = ", ")
+
+# Only keep approval percentages of airports which have IATA codes
+approvals_by_airport<- approvals_by_airport %>%
+  semi_join(airports, by = "Airport Code")
+
+approvals_by_airport <- approvals_by_airport %>%
+  left_join(airports)
+
+## identify duplicate
+
+n_occur <- data.frame(table(approvals_by_airport$`Airport Code`))
+##Row 102, philadelphia has a duplicate entry that is worthless. Australia has two sets of nearly identical coordinates. I'll drop row 22
+
+approvals_by_airport <- approvals_by_airport[-c(22, 102),]
+approvals_by_airport$lat <- as.numeric(approvals_by_airport$lat)
+approvals_by_airport$lon <- as.numeric(approvals_by_airport$lon)
+USA <- get_map("United States", zoom = 4)
+
+ggmap(USA) +
+  geom_point(
+    aes(x = lat, y = lon, colour = Percentage, size = Total),
+    data = approvals_by_airport,
+    alpha = 1,
+    na.rm = T) + 
+  scale_colour_viridis(begin = .2) +
+  ggtitle("TSA Claim Approval Percentage at US Airports") +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank()
+        ) 
+```
+
+TSA claims for incidents that took place at many Midwest airports have relatively high approval percentages. This could mean that the actions of TSA agents at these airports justify more claims being approved. Perhaps the Midwestern stereotype of hospitality is unfounded. Approval percentages are low at most of the major hubs, and Las Vegas in particular caught my eye. TSA claims for incidents that took place at McCarran International Airport have one of the lowest chances of being approved in the country. Perhaps this is unsurprising - after all, the House always wins.
